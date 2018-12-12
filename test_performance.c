@@ -1,16 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
+
+#include "systime.h"
 
 #include "thread_pool.h"
-
-time_t get_current_timestamp()
-{
-    struct timeval now = {0, 0};
-    gettimeofday(&now, NULL);
-    return now.tv_sec * 1000 * 1000 + now.tv_usec;
-}
 
 static void* write_file(void* argv)
 {

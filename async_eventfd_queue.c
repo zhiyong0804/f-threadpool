@@ -9,14 +9,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include "systime.h"
+#include "queue.h"
+#include "async_queue_interner.h"
+
+
 
 #define MAX_EVENTS 1024
 
-#include <sys/time.h>
-
-
-#include "queue.h"
-#include "async_queue_interner.h"
 
 static async_queue_t* async_eventfd_queue_create(int size);
 static BOOL async_eventfd_queue_push_tail(async_queue_t* q, task_t* data);
@@ -38,13 +38,6 @@ const async_queue_op_t async_eventfd_op =
 };
 
 static time_t start_stm = 0;
-
-static time_t get_current_timestamp()
-{
-    struct timeval now = {0, 0};
-    gettimeofday(&now, NULL);
-    return now.tv_sec * 1000 * 1000 + now.tv_usec;
-}
 
 async_queue_t *async_eventfd_queue_create(int size)
 {

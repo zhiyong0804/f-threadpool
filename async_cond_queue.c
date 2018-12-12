@@ -5,7 +5,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/time.h>
+#include "systime.h"
 
 
 static async_queue_t* async_cond_queue_create(int size);
@@ -31,13 +31,6 @@ const async_queue_op_t async_cond_op =
 
 
 static time_t start_stm = 0;
-
-static time_t get_current_timestamp()
-{
-    struct timeval now = {0, 0};
-    gettimeofday(&now, NULL);
-    return now.tv_sec * 1000 * 1000 + now.tv_usec;
-}
 
 async_queue_t* async_cond_queue_create(int size)
 {
