@@ -1,8 +1,33 @@
-#include "async_cond_queue.h"
 
+#include "async_queue_interner.h"
+#include "queue.h"
+
+#include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/time.h>
+
+
+static async_queue_t* async_cond_queue_create(int size);
+static BOOL async_cond_queue_push_tail(async_queue_t* q, task_t* t);
+static task_t* async_cond_queue_pop_head(async_queue_t* q, int timeout);
+static BOOL async_cond_queue_empty(async_queue_t* q);
+static BOOL async_cond_queue_destory(async_queue_t* q);
+static void async_cond_queue_free(async_queue_t* q);
+
+
+//struct async_queue_op_t;
+
+const async_queue_op_t async_cond_op =
+{
+    "cond",
+    async_cond_queue_create,
+    async_cond_queue_push_tail,
+    async_cond_queue_pop_head,
+    async_cond_queue_free,
+    async_cond_queue_empty,
+    async_cond_queue_destory
+};
 
 
 static time_t start_stm = 0;
@@ -14,7 +39,7 @@ static time_t get_current_timestamp()
     return now.tv_sec * 1000 * 1000 + now.tv_usec;
 }
 
-async_queue_t* async_queue_create(int size)
+async_queue_t* async_cond_queue_create(int size)
 {
     async_queue_t* q = (async_queue_t*)malloc(sizeof (async_queue_t));
     q->queue           = queue_create(size);
@@ -24,31 +49,31 @@ async_queue_t* async_queue_create(int size)
     pthread_cond_init(&(q->cond), NULL);
 
     start_stm = get_current_timestamp();
-    
+
     return q;
 }
 
-bool async_queue_push_tail(async_queue_t* q, void* data)
+BOOL async_cond_queue_push_tail(async_queue_t* q, task_t* t)
 {
     if (!queue_is_full(q->queue))
     {
         pthread_mutex_lock(&(q->mutex));
-        queue_push_tail(q->queue, data);
+        queue_push_tail(q->queue, t);
         if (q->waiting_threads > 0)
         {
             pthread_cond_signal(&(q->cond));
         }
         pthread_mutex_unlock(&(q->mutex));
-        
-        return true;
+
+        return TRUE;
     }
-    
-    return false;
+
+    return FALSE;
 }
 
-void* async_queue_pop_head(async_queue_t* q, int timeout)
+task_t* async_cond_queue_pop_head(async_queue_t* q, int timeout)
 {
-    void *task = NULL;
+    task_t *task = NULL;
     struct timeval now;
     struct timespec outtime;
     pthread_mutex_lock(&(q->mutex));
@@ -72,9 +97,9 @@ void* async_queue_pop_head(async_queue_t* q, int timeout)
         }
         q->waiting_threads--;
     }
-    
+
     task = queue_pop_head(q->queue);
-        
+
     /* µ÷ÊÔ´úÂë */
     if (task)
     {
@@ -88,21 +113,21 @@ void* async_queue_pop_head(async_queue_t* q, int timeout)
         }
     }
     pthread_mutex_unlock(&(q->mutex));
-    
+
     return task;
 }
 
-bool async_queue_wakeup(async_queue_t* q)
+BOOL async_cond_queue_destory(async_queue_t* q)
 {
     pthread_mutex_lock(&(q->mutex));
     q->quit = 1;  // wake up thread to jump out from async_queue_pop_head
     pthread_cond_broadcast(&(q->cond));
     pthread_mutex_unlock(&(q->mutex));
-    
-    return true;
+
+    return TRUE;
 }
 
-void async_queue_free(async_queue_t* q)
+void async_cond_queue_free(async_queue_t* q)
 {
     queue_free(q->queue);
     pthread_cond_destroy(&(q->cond));
@@ -110,7 +135,8 @@ void async_queue_free(async_queue_t* q)
     free(q);
 }
 
-bool async_queue_is_empty(async_queue_t* q)
+BOOL async_cond_queue_empty(async_queue_t* q)
 {
     return queue_is_empty(q->queue);
 }
+

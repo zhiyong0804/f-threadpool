@@ -16,6 +16,8 @@ static void* write_file(void* argv)
 {
     char path[128] = {0};
     int file_index = *((int*)argv);
+
+    //please check there is test directory under your current directory
     snprintf(path, 128, "test/%d.txt", file_index);
 
     FILE* file_ptr = fopen(path, "w+");
@@ -26,7 +28,7 @@ static void* write_file(void* argv)
         {
             fwrite(str, sizeof(char), strlen(str), file_ptr);
         }
-       
+
         fclose(file_ptr);
     }
     else
@@ -46,11 +48,11 @@ int main(int argc, char** argv)
     }
 
     int task_count = atoi(argv[1]);
-    
+
     time_t start = get_current_timestamp();
 
     threadpool_t* pool = threadpool_create(8, 65535, 0);
-    
+
     int* file_index = (int*)malloc(sizeof(int) * task_count);
     for (int i = 0; i < task_count; i ++)
     {
@@ -64,7 +66,7 @@ int main(int argc, char** argv)
             printf("add task to thread pool failed.\n");
         }
     }
-    
+
 #if 1
     if (0 != threadpool_destroy(pool, graceful_shutdown))
     {
@@ -79,3 +81,5 @@ int main(int argc, char** argv)
 
     return 0;
 }
+
+

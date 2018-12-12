@@ -1,5 +1,6 @@
+
 #include "queue.h"
-#include "async_eventfd_queue.h"
+//#include "async_queue_interner.h"
 
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
@@ -13,6 +14,29 @@
 
 #include <sys/time.h>
 
+
+#include "queue.h"
+#include "async_queue_interner.h"
+
+static async_queue_t* async_eventfd_queue_create(int size);
+static BOOL async_eventfd_queue_push_tail(async_queue_t* q, task_t* data);
+static task_t* async_eventfd_queue_pop_head(async_queue_t* q, int timeout);
+static void async_eventfd_queue_free(async_queue_t* q);
+static BOOL async_eventfd_queue_empty(async_queue_t* q);
+static BOOL async_eventfd_queue_destory(async_queue_t* q);
+
+
+const async_queue_op_t async_eventfd_op =
+{
+    "eventfd",
+    async_eventfd_queue_create,
+    async_eventfd_queue_push_tail,
+    async_eventfd_queue_pop_head,
+    async_eventfd_queue_free,
+    async_eventfd_queue_empty,
+    async_eventfd_queue_destory
+};
+
 static time_t start_stm = 0;
 
 static time_t get_current_timestamp()
@@ -22,49 +46,49 @@ static time_t get_current_timestamp()
     return now.tv_sec * 1000 * 1000 + now.tv_usec;
 }
 
-async_queue_t *async_queue_create(int size)
+async_queue_t *async_eventfd_queue_create(int size)
 {
     async_queue_t* q = (async_queue_t*)malloc(sizeof (async_queue_t));
 
     q->queue   = queue_create(size);
     q->epollfd = epoll_create1(0);
     q->tasked  = 0;
-    if (q->epollfd == -1) 
+    if (q->epollfd == -1)
     {
         return NULL;
     }
 
     start_stm = get_current_timestamp();
-    
+
     return q;
 }
 
-bool async_queue_push_tail(async_queue_t* q, void *data)
+BOOL async_eventfd_queue_push_tail(async_queue_t* q, task_t *task)
 {
     unsigned long long i = 0xffffffff;
     if (!queue_is_full(q->queue))
     {
-        queue_push_tail(q->queue, data);
-        
+        queue_push_tail(q->queue, task);
+
         struct epoll_event ev;
         int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
         if (efd == -1) printf("eventfd create: %s", strerror(errno));
         ev.events = EPOLLIN ;// | EPOLLLT;
         ev.data.fd = efd;
-        if (epoll_ctl(q->epollfd, EPOLL_CTL_ADD, efd, &ev) == -1) 
+        if (epoll_ctl(q->epollfd, EPOLL_CTL_ADD, efd, &ev) == -1)
         {
             return NULL;
         }
-        
+
         write(efd, &i, sizeof (i));
-        
-        return true;
+
+        return TRUE;
     }
 
-    return false;
+    return FALSE;
 }
 
-void* async_queue_pop_head(async_queue_t* q, int timeout)
+task_t* async_eventfd_queue_pop_head(async_queue_t* q, int timeout)
 {
     unsigned long long i = 0;
     struct epoll_event events[MAX_EVENTS];
@@ -77,8 +101,8 @@ void* async_queue_pop_head(async_queue_t* q, int timeout)
     {
         read(events[0].data.fd, &i, sizeof (i));
         close(events[0].data.fd); // NOTE: need to close here
-        void* task = queue_pop_head(q->queue);
-        
+        task_t* task = queue_pop_head(q->queue);
+
         /* µ÷ÊÔ´úÂë */
         if (task)
         {
@@ -93,23 +117,24 @@ void* async_queue_pop_head(async_queue_t* q, int timeout)
         }
         return task;
     }
-    
+
     return NULL;
 }
 
-void async_queue_free(async_queue_t *q)
+void async_eventfd_queue_free(async_queue_t *q)
 {
     queue_free(q->queue);
     close(q->efd);
     free(q);
 }
 
-bool async_queue_is_empty(async_queue_t* q)
+BOOL async_eventfd_queue_empty(async_queue_t* q)
 {
     return queue_is_empty(q->queue);
 }
 
-bool async_queue_wakeup(async_queue_t* q)
+BOOL async_eventfd_queue_destory(async_queue_t* q)
 {
-    return true;
+    return TRUE;
 }
+

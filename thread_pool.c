@@ -1,28 +1,21 @@
 
 #include "thread_pool.h"
-
-#ifdef POOL_WITH_EVENT_QUEUE
-    #include "async_eventfd_queue.h"
-#else
-    #include "async_cond_queue.h"
-#endif
+#include "async_queue_interner.h"
 
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-/**
- *  @struct threadpool_task
- *  @brief the work struct
- *
- *  @var function Pointer to the function that will perform the task.
- *  @var argument Argument to be passed to the function.
- */
-typedef struct {
-    void* (*run)(void *);
-    void* argument;
-} threadpool_task_t;
+extern const async_queue_op_t async_eventfd_op;
+extern const async_queue_op_t async_cond_op;
 
+static const async_queue_op_t* async_queue_ops[] =
+{
+    &async_cond_op,
+    &async_eventfd_op
+};
+
+static threadpool_type_t threadpool_current = threadpool_cond_type;
 
 /**
  * @function void *threadpool_thread(void *threadpool)
@@ -33,6 +26,13 @@ static void* threadpool_thread(void *threadpool);
 
 int threadpool_free(threadpool_t *pool);
 
+
+BOOL threadpool_config(threadpool_type_t type)
+{
+    threadpool_current = type;
+    return TRUE;
+}
+
 threadpool_t* threadpool_create(int thread_count, int queue_size, int flags)
 {
     threadpool_t* pool;
@@ -42,7 +42,7 @@ threadpool_t* threadpool_create(int thread_count, int queue_size, int flags)
         printf("please check your input parameters.\n");
         return NULL;
     }
-    
+
     if ((pool = (threadpool_t*)malloc(sizeof(threadpool_t))) == NULL)
     {
         printf("malloc threadpool memory failed.\n");
@@ -50,15 +50,16 @@ threadpool_t* threadpool_create(int thread_count, int queue_size, int flags)
     }
 
     pool->qsize    = queue_size;
-    pool->tsize    = thread_count; 
+    pool->tsize    = thread_count;
+    pool->qop      = async_queue_ops[threadpool_current];
     pool->threads  = (pthread_t*)malloc(sizeof(pthread_t) * thread_count);
-    pool->queue    =  async_queue_create(queue_size);
+    pool->queue    =  (pool->qop->create)(queue_size);
     pool->shutdown = 0;
 
     // create worker thread
     for(int i = 0; i < pool->tsize; i ++)
     {
-        if(pthread_create(&(pool->threads[i]), NULL, threadpool_thread, (void*)pool) != 0) 
+        if(pthread_create(&(pool->threads[i]), NULL, threadpool_thread, (void*)pool) != 0)
         {
             printf("create thread failed.\n");
             threadpool_destroy(pool, 0);
@@ -66,7 +67,7 @@ threadpool_t* threadpool_create(int thread_count, int queue_size, int flags)
         }
     }
 
-    pool->started = true;
+    pool->started = TRUE;
 
     return pool;
 }
@@ -75,32 +76,26 @@ int threadpool_add(threadpool_t *pool, void* (*routine)(void *), void *arg)
 {
     int err = 0;
 
-    if(pool == NULL || routine == NULL) 
+    if(pool == NULL || routine == NULL)
     {
         return threadpool_invalid;
     }
 
     do {
         /* Are we shutting down ? */
-        if(pool->shutdown) 
+        if(pool->shutdown)
         {
             err = threadpool_shutdown;
             break;
         }
 
-        threadpool_task_t* task = (threadpool_task_t*)malloc(sizeof(threadpool_task_t));
-        if(task == NULL)
-        {
-            err =  threadpool_memory_error;
-            break;
-        }
-        task->run = routine;
-        task->argument = arg;
+        task_t task;
+        task.run  = routine;
+        task.argv = arg;
 
-        if (!async_queue_push_tail(pool->queue, task))
+        if (!pool->qop->push(pool->queue, &task))
         {
             printf("push task to queue failed.\n");
-            free(task);
         }
 
     } while(0);
@@ -112,14 +107,14 @@ int threadpool_destroy(threadpool_t *pool, int flags)
 {
     int i, err = 0;
 
-    if(pool == NULL) 
+    if(pool == NULL)
     {
         return threadpool_invalid;
     }
 
     do {
         /* Already shutting down */
-        if(pool->shutdown) 
+        if(pool->shutdown)
         {
             err = threadpool_shutdown;
             break;
@@ -128,13 +123,13 @@ int threadpool_destroy(threadpool_t *pool, int flags)
         pool->shutdown = (flags & threadpool_graceful) ?
             graceful_shutdown : immediate_shutdown;
 
-        /* Wake up all worker threads */
-        async_queue_wakeup(pool->queue);
+        /* Destory all worker threads */
+        pool->qop->destory(pool->queue);
 
         /* Join all worker thread */
-        for(i = 0; i < pool->tsize; i++) 
+        for(i = 0; i < pool->tsize; i++)
         {
-            if(pthread_join(pool->threads[i], NULL) != 0) 
+            if(pthread_join(pool->threads[i], NULL) != 0)
             {
                 err = threadpool_thread_failure;
             }
@@ -142,7 +137,7 @@ int threadpool_destroy(threadpool_t *pool, int flags)
     } while(0);
 
     /* Only if everything went well do we deallocate the pool */
-    if(!err) 
+    if(!err)
     {
         threadpool_free(pool);
     }
@@ -152,15 +147,15 @@ int threadpool_destroy(threadpool_t *pool, int flags)
 
 int threadpool_free(threadpool_t *pool)
 {
-    if(pool == NULL || pool->started > 0) 
+    if(pool == NULL || pool->started > 0)
     {
         return -1;
     }
 
-    if(pool->threads) 
+    if(pool->threads)
     {
         free(pool->threads);
-        async_queue_free(pool->queue);
+        pool->qop->free(pool->queue);
     }
     free(pool);
 
@@ -171,17 +166,16 @@ static void *threadpool_thread(void *threadpool)
 {
     threadpool_t *pool = (threadpool_t *)threadpool;
 
-    for(;;) 
+    for(;;)
     {
-        threadpool_task_t* task = (threadpool_task_t*)async_queue_pop_head(pool->queue, 50);
+        task_t* task = pool->qop->pop(pool->queue, 50);
         if (task != NULL)
         {
-            (*(task->run))(task->argument);
-            free(task);
+            task->run(task->argv);
         }
 
         if(((pool->shutdown == immediate_shutdown) || (pool->shutdown == graceful_shutdown) )
-            && (async_queue_is_empty(pool->queue)))
+            && (pool->qop->empty(pool->queue)))
         {
             //printf("--- thread %d is exit.\n", pthread_self());
             break;
