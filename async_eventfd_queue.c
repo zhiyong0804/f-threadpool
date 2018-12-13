@@ -96,7 +96,6 @@ task_t* async_eventfd_queue_pop_head(async_queue_t* q, int timeout)
         close(events[0].data.fd); // NOTE: need to close here
         task_t* task = queue_pop_head(q->queue);
 
-        /* µ÷ÊÔ´úÂë */
         if (task)
         {
             q->tasked ++;
